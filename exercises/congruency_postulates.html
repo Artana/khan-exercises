@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html data-require="math graphie graphie-helpers graphie-geometry math-format interactive congruence">
+<head>
+	<meta charset="UTF-8" />
+	<title>Congruency Postulates</title>
+	<script src="../khan-exercise.js"></script>
+</head>
+<body>
+	<div class="exercise">
+		<div class="problems">
+			<div id="original">
+				<div class="vars" data-ensure"abs(ANGLES[0] - ANGLES[1]) > 10 && abs(ANGLES[1] - ANGLES[2]) > 10 && abs(ANGLES[0] - ANGLES[2]) > 10 ">
+					<var id="TYPE">randFromArray([ "SSS", "SAS", "SAA", "ASA" ])</var>
+					<var id="NAME">{ "SSS": "Side-Side-Side", "SAS": "Side-Angle-Side", "SAA": "Side-Angle-Angle", "ASA": "Angle-Side-Angle"}[TYPE]</var>
+					<var id="ANGLES">randomTriangleAngles.triangle()</var>
+					<var id="SCALE">5 + random() * 2</var>
+					<var id="TRIANGLE">new Triangle( [ 0, 0 ], ANGLES, SCALE, {} )</var>
+					<var id="REFLECTED">randRange( 0, 1 ) === 1 ? true : false</var>
+					<var id="ANSWER">"Yes"</var>
+				</div>
+				<div class="problem">
+					Use the shapes below to help answer the question:
+					<p><strong>Does <em><var>NAME</var></em> represent a triangle congruency postulate?</strong></p>
+				</div>
+				<div class="question">
+					<div class="graphie" id="triangles">
+						init({
+							range: [ [ -7, 7 ], [ -7, 7 ] ]
+						});
+						addMouseLayer();
+						initCongruence({ triangle: TRIANGLE, type: TYPE, reflected: REFLECTED });
+
+						TRIANGLE.rotate( randRange( 0, 360 ) );
+						style({ stroke: "#b1c9f5", "stroke-width": 5 });				
+						TRIANGLE.translate([
+							-6 - Math.min(TRIANGLE.points[0][0], TRIANGLE.points[1][0], TRIANGLE.points[2][0]),
+							6 - Math.max(TRIANGLE.points[0][1], TRIANGLE.points[1][1], TRIANGLE.points[2][1])
+						]);
+
+						TRIANGLE.draw();
+						addTriangleDecorations( TRIANGLE, TYPE );
+					</div>
+				</div>
+
+				<div class="solution"><var>ANSWER</var></div>
+				<ul class="choices" data-category="true">
+					<li>Yes</li>
+					<li>No</li>
+				</ul>
+			</div>
+			
+			<div id="ssa" data-type="original">
+				<!-- Ensure second side is longer than first and first angle is not close to 90 to ensure the resulting SSA can make two triangles -->
+				<div class="vars" data-ensure="(TRIANGLE.niceSideLengths[0] + 1) < TRIANGLE.niceSideLengths[1] && abs(ANGLES[0] - 90) > 10">
+					<var id="TYPE">"SSA"</var>
+					<var id="NAME">"Side-Side-Angle"</var>
+					<var id="ANSWER">"No"</var>
+				</div>
+<!--
+				<div class="question">
+					<div class="graphie" id="triangles">
+						init({
+							range: [ [ -7, 7 ], [ -20, 7 ] ]
+						});
+						addMouseLayer();
+						for (var a = 10; a &lt; 180; a += 10 ) {
+							var y = 7 - (a / 10);
+							var x = a % 20 ? -4 : 0;
+							addMovableLineSegment({ coordA: [x-2, y], coordZ: [x, y], fixed: true });
+							addMovableLineSegment({ coordA: [x, y], coordZ: [ 2*cos(a * PI/180) + x, 2*sin(a * PI/180) + y], fixed: true });
+							drawArcs( [x-2, y], [x, y], [ 2*cos(a * PI/180) + x, 2*sin(a * PI/180) + y], 2 );
+						}
+					</div>
+				</div>
+-->
+
+			</div>
+		</div>
+	</div>
+</body>
+</html>

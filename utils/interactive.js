@@ -1,5 +1,7 @@
 jQuery.extend( KhanUtil, {
 
+	dragging: false,
+
 	// Wrap graphInit to create a fixed-size graph automatically scaled to the given range
 	initAutoscaledGraph: function( range, options ) {
 		var graph = KhanUtil.currentGraph;
@@ -56,6 +58,44 @@ jQuery.extend( KhanUtil, {
 	},
 
 
+	// Find the angle between two or three points
+	findAngle: function ( point1, point2, vertex ) {
+		if ( typeof vertex === "undefined" ) {
+			var x = point1[0] - point2[0];
+			var y = point1[1] - point2[1];
+			if ( !x && !y ) {
+				return 0;
+			}
+			return ( 180 + Math.atan2( -y, -x ) * 180 / Math.PI + 360) % 360;
+		} else {
+			return KhanUtil.findAngle( point1, vertex ) - KhanUtil.findAngle( point2, vertex );
+		}
+	},
+
+	// Draw angle arcs
+	drawArcs: function( point1, vertex, point3, numArcs ) {
+		var startAngle = KhanUtil.findAngle( point1, vertex);
+		var endAngle = KhanUtil.findAngle( point3, vertex);
+		if (( (endAngle - startAngle) % 360 + 360) % 360 > 180) {
+			var temp = startAngle;
+			startAngle = endAngle;
+			endAngle = temp;
+		}
+
+		var radius = 0.3;
+		// smaller angles need a bigger radius
+		if ((((endAngle - startAngle) % 360 + 360) % 360) < 90) {
+			radius = (-0.6/90) * (((endAngle - startAngle) % 360 + 360) % 360) + 0.8;
+		}
+
+		var arcset = [];
+		for (var arc = 0; arc < numArcs; ++arc) {
+			arcset.push( KhanUtil.currentGraph.arc( vertex, radius + (0.15 * arc), startAngle, endAngle ) );
+		}
+		return arcset;
+	},
+
+
 	// Add a point to the graph that can be dragged around.
 	//
 	// Options can be set to control how the point behaves:
@@ -90,10 +130,10 @@ jQuery.extend( KhanUtil, {
 
 		// The state object that gets returned
 		var movablePoint = {
-				highlight: false,
-				dragging: false,
-				coordX: options.coordX,
-				coordY: options.coordY,
+			highlight: false,
+			dragging: false,
+			coordX: options.coordX,
+			coordY: options.coordY,
 		};
 
 		graph.style({
@@ -113,7 +153,7 @@ jQuery.extend( KhanUtil, {
 		jQuery( movablePoint.mouseTarget[0] ).bind("vmousedown vmouseover vmouseout", function( event ) {
 			if ( event.type === "vmouseover" ) {
 				movablePoint.highlight = true;
-				if ( !movablePoint.dragging ) {
+				if ( !KhanUtil.dragging ) {
 					movablePoint.visibleShape.animate({ scale: 2 }, 50 );
 				}
 
@@ -129,6 +169,7 @@ jQuery.extend( KhanUtil, {
 				jQuery( document ).bind("vmousemove vmouseup", function( event ) {
 					event.preventDefault();
 					movablePoint.dragging = true;
+					KhanUtil.dragging = true;
 
 					// mouse{X|Y} are in pixels relative to the SVG
 					var mouseX = event.pageX - jQuery( graph.raphael.canvas.parentNode ).offset().left;
@@ -161,9 +202,17 @@ jQuery.extend( KhanUtil, {
 						// movablePoint object we return as a sort of event handler
 						// By returning false from onMove(), the move can be vetoed,
 						// providing custom constraints on where the point can be moved.
+						// By returning array [x, y], the move can be overridden
 						if (typeof movablePoint.onMove === "function") {
-							if (movablePoint.onMove( coordX, coordY ) === false) {
+							var result = movablePoint.onMove( coordX, coordY );
+							if (result === false) {
 								doMove = false;
+							}
+							if (typeof result === "object") {
+								coordX = result[0];
+								coordY = result[1];
+								mouseX = (coordX - graph.range[0][0]) * graph.scale[0];
+								mouseY = (-coordY + graph.range[1][1]) * graph.scale[1];
 							}
 						}
 						if (doMove) {
@@ -179,10 +228,25 @@ jQuery.extend( KhanUtil, {
 					} else if ( event.type === "vmouseup" ) {
 						jQuery( document ).unbind( "vmousemove vmouseup" );
 						movablePoint.dragging = false;
-						if (!movablePoint.highlight) {
-							movablePoint.visibleShape.animate({ scale: 1 }, 50 );
+						KhanUtil.dragging = false;
+						if (typeof movablePoint.onMoveEnd === "function") {
+							var result = movablePoint.onMoveEnd( coordX, coordY );
+							if (typeof result === "object") {
+								coordX = result[0];
+								coordY = result[1];
+								mouseX = (coordX - graph.range[0][0]) * graph.scale[0];
+								mouseY = (-coordY + graph.range[1][1]) * graph.scale[1];
+								movablePoint.visibleShape.attr( "cx", mouseX );
+								movablePoint.mouseTarget.attr( "cx", mouseX );
+								movablePoint.visibleShape.attr( "cy", mouseY );
+								movablePoint.mouseTarget.attr( "cy", mouseY );
+								movablePoint.coordX = coordX;
+								movablePoint.coordY = coordY;
+							}
 						}
-
+						//if (!movablePoint.highlight) {
+							movablePoint.visibleShape.animate({ scale: 1 }, 50 );
+						//}
 					}
 				});
 			}
@@ -208,6 +272,18 @@ jQuery.extend( KhanUtil, {
 				this.onMove( coordX, coordY );
 			}
 		};
+
+		// Put the point at a new position without animating or calling callback
+		movablePoint.setCoord = function( coordX, coordY ) {
+			var scaledPoint = graph.scalePoint([ coordX, coordY ]);
+			this.visibleShape.attr({ cx: scaledPoint[0] });
+			this.visibleShape.attr({ cy: scaledPoint[1] });
+			this.mouseTarget.attr({ cx: scaledPoint[0] });
+			this.mouseTarget.attr({ cy: scaledPoint[1] });
+			this.coordX = coordX;
+			this.coordY = coordY;
+		};
+
 
 		return movablePoint;
 	},
@@ -270,8 +346,8 @@ jQuery.extend( KhanUtil, {
 		jQuery( movableLine.mouseTarget[0] ).css( "cursor", "move" );
 		jQuery( movableLine.mouseTarget[0] ).bind("vmousedown vmouseover vmouseout", function( event ) {
 			if ( event.type === "vmouseover" ) {
-				movableLine.highlight = true;
-				if ( !movableLine.dragging ) {
+				if ( !KhanUtil.dragging ) {
+					movableLine.highlight = true;
 					movableLine.visibleShape.animate({ "stroke-width": 5 }, 50 );
 				}
 
@@ -287,6 +363,7 @@ jQuery.extend( KhanUtil, {
 				jQuery( document ).bind("vmousemove vmouseup", function( event ) {
 					event.preventDefault();
 					movableLine.dragging = true;
+					KhanUtil.dragging = true;
 
 					// mouse{X|Y} are in pixels relative to the SVG
 					var mouseX = event.pageX - jQuery( graph.raphael.canvas.parentNode ).offset().left;
@@ -329,6 +406,7 @@ jQuery.extend( KhanUtil, {
 					} else if ( event.type === "vmouseup" ) {
 						jQuery( document ).unbind( "vmousemove vmouseup" );
 						movableLine.dragging = false;
+						KhanUtil.dragging = false;
 						if (!movableLine.highlight) {
 							movableLine.visibleShape.animate({ "stroke-width": 2 }, 50 );
 						}
@@ -379,6 +457,9 @@ jQuery.extend( KhanUtil, {
 		}).join("");
 	},
 
+	distance: function( point1, point2 ) {
+		return Math.sqrt( (point1[0] - point2[0]) * (point1[0] - point2[0]) + (point1[1] - point2[1]) * (point1[1] - point2[1]) );
+	},
 
 	// Plot a function that allows the user to mouse over points on the function.
 	// * currently, the function must be continuous
@@ -398,7 +479,7 @@ jQuery.extend( KhanUtil, {
 		}, options);
 		var graph = options.graph;
 		var interactiveFn = {
-				highlight: false,
+			highlight: false,
 		};
 
 		// Plot the function
@@ -533,6 +614,378 @@ jQuery.extend( KhanUtil, {
 		animate: function(){},
 		attr: function(){},
 		remove: function(){}
+	},
+
+
+	// A SmartPoint wraps MovablePoint and allows automatic constraints on
+	// its movement as well as automatically managing line segments that
+	// terminate at the point.
+	//
+	//  - Set point to be immovable (perhaps not too useful):
+	//        smartPoint.fixed = true
+	//
+	//  - Constrain point to a fixed distance from another point. The resulting
+	//    point will move in a circle:
+	//        smartPoint.fixedDistance = {
+	//           dist: 2,
+	//           point: point1
+	//        }
+	//
+	//  - Constrain point to a line defined by a fixed angle between it and
+	//    two other points:
+	//        smartPoint.fixedAngle = {
+	//           angle: 45,
+	//           vertex: point1,
+	//           ref: point2
+	//        }
+	//
+	//  - Connect a movableLineSegment to a smartPoint. The point is attached
+	//    to a specific end of the line segment by adding the segment either to
+	//    the list of lines that start at the point or the list of lines that
+	//    end at the point:
+	//        smartPoint.lineStarts.push( movableLineSegment );
+	//          - or -
+	//        smartPoint.lineEnds.push( movableLineSegment );
+	//
+	addSmartPoint: function( options ) {
+		options = jQuery.extend({
+			graph: KhanUtil.currentGraph,
+			coordX: 0,
+			coordY: 0,
+			fixed: false,
+			invisible: false,
+			fixedAngle: {},
+			fixedDistance: {}
+		}, options);
+		var graph = options.graph;
+
+		var smartPoint = jQuery.extend({
+			coord: [ options.coordX, options.coordY ],
+			lineStarts: [],
+			lineEnds: [],
+		}, options);
+
+		if (!smartPoint.invisible) {
+			smartPoint.point = KhanUtil.addMovablePoint( options );
+		} else {
+			smartPoint.point = {
+				coordX: options.coordX,
+				coordY: options.coordY,
+				setCoord: function( coordX, coordY ) {
+					this.coordX = coordX;
+					this.coordY = coordY;
+				}
+			};
+		}
+
+		// Using the passed coordinates, apply any constraints and return the closest coordinates
+		// that match the constraints.
+		smartPoint.applyConstraint = function( coord ) {
+			var newCoord = [ coord[0], coord[1] ];
+			if ( typeof this.fixedAngle.angle === "number" && typeof this.fixedDistance.dist === "number") {
+				// both distance and angle are constrained
+				var constrainedAngle = this.fixedAngle.angle + KhanUtil.findAngle( this.fixedAngle.ref.coord, this.fixedAngle.vertex.coord );
+				var length = this.fixedDistance.dist;
+				constrainedAngle = constrainedAngle * Math.PI / 180;
+				newCoord[0] = length * Math.cos(constrainedAngle) + this.fixedDistance.point.coord[0];
+				newCoord[1] = length * Math.sin(constrainedAngle) + this.fixedDistance.point.coord[1];
+				// newCoord[0] = length * Math.cos(constrainedAngle) + this.fixedAngle.vertex.coord[0];
+				// newCoord[1] = length * Math.sin(constrainedAngle) + this.fixedAngle.vertex.coord[1];
+
+			} else if ( typeof this.fixedAngle.angle === "number" ) {
+				// angle is constrained:
+				// constrainedAngle is the angle from vertex to the point with reference to the screen
+				var constrainedAngle = (this.fixedAngle.angle + KhanUtil.findAngle( this.fixedAngle.ref.coord, this.fixedAngle.vertex.coord ) ) * Math.PI / 180;
+				// angle is the angle from vertex to the mouse with reference to the screen
+				var angle = KhanUtil.findAngle( coord, this.fixedAngle.vertex.coord ) * Math.PI / 180;
+				var distance = KhanUtil.distance( coord, this.fixedAngle.vertex.coord );
+				var length = distance * Math.cos(constrainedAngle - angle);
+				length = length < 0.5 ? 0.5 : length;
+				newCoord[0] = length * Math.cos(constrainedAngle) + this.fixedAngle.vertex.coord[0];
+				newCoord[1] = length * Math.sin(constrainedAngle) + this.fixedAngle.vertex.coord[1];
+
+			} else if ( typeof this.fixedDistance.dist === "number" ) {
+				// distance is constrained
+				var angle = KhanUtil.findAngle( coord, this.fixedDistance.point.coord );
+				var length = this.fixedDistance.dist;
+				angle = angle * Math.PI / 180;
+				newCoord[0] = length * Math.cos(angle) + this.fixedDistance.point.coord[0];
+				newCoord[1] = length * Math.sin(angle) + this.fixedDistance.point.coord[1];
+
+			} else if ( this.fixed ) {
+				// point is fixed
+				newCoord = this.coord;
+
+			}
+			return newCoord;
+		};
+
+		// After moving the point, call this to update all line segments terminating at the point
+		smartPoint.updateLineEnds = function() {
+			jQuery( this.lineStarts ).each( function() {
+				this.coordA = smartPoint.coord;
+				this.transform();
+			});
+			jQuery( this.lineEnds ).each( function() {
+				this.coordZ = smartPoint.coord;
+				this.transform();
+			});
+		};
+
+		// Force the point to check its constraints and move itself if necessary. Useful after
+		// moving other stuff upon which the point's position may depend.
+		smartPoint.meetConstraints = function() {
+			var coord = this.applyConstraint( this.coord );
+			if ( this.coord !== coord ) {
+				this.point.setCoord( coord[0], coord[1] );
+				this.coord = coord;
+				this.updateLineEnds();
+			}
+		};
+
+		// Move the point to a specific location without any other checks or callbacks
+		smartPoint.setCoord = function( coordX, coordY ) {
+			this.point.setCoord( coordX, coordY );
+			this.coord = [ coordX, coordY ];
+		};
+
+		// Change z-order to back
+		smartPoint.toBack = function() {
+			if (!this.invisible) {
+				smartPoint.point.mouseTarget.toBack();
+				smartPoint.point.visibleShape.toBack();
+			}
+		};
+
+		// Change z-order to front
+		smartPoint.toFront = function() {
+			if (!this.invisible) {
+				smartPoint.point.mouseTarget.toFront();
+				smartPoint.point.visibleShape.toFront();
+			}
+		};
+
+
+		smartPoint.point.onMove = function( coordX, coordY ) {
+			var dX = smartPoint.coord[0];
+			var dY = smartPoint.coord[1];
+			smartPoint.coord = smartPoint.applyConstraint([ coordX, coordY ]);
+			smartPoint.updateLineEnds();
+
+			dX = smartPoint.coord[0] - dX;
+			dY = smartPoint.coord[1] - dY;
+			if ( typeof smartPoint.onMove === "function" ) {
+				smartPoint.onMove( dX, dY );
+			}
+
+			smartPoint.toFront();
+
+			return smartPoint.coord;
+		};
+
+		smartPoint.point.onMoveEnd = function( coordX, coordY ) {
+			smartPoint.coord = smartPoint.applyConstraint([ coordX, coordY ]);
+			if ( typeof smartPoint.onMoveEnd === "function" ) {
+				return smartPoint.onMoveEnd( coordX, coordY );
+			}
+		};
+
+		return smartPoint;
+	},
+
+
+	// MovableLineSegment is a line segment that can be dragged around the
+	// screen. By attaching a smartPoint to each (or one) end, the ends can be
+	// manipulated individually.
+	//
+	// To use with smartPoints, add the smartPoints first, then:
+	//   addMovableLineSegment({ pointA: smartPoint1, pointZ: smartPoint2 });
+	// Or just one end:
+	//   addMovableLineSegment({ pointA: smartPoint, coordZ: [0, 0] });
+	//
+	// Include "fixed: true" in the options if you don't want the entire line
+	// to be draggable (you can still use points to make the endpoints
+	// draggable)
+	//
+	// The returned object includes the following properties/methods:
+	//
+	//   - lineSegment.coordA / lineSegment.coordZ
+	//         The coordinates of each end of the line segment
+	//
+	//   - lineSegment.transform( syncToPoints )
+	//         Repositions the line segment. Call after changing coordA and/or
+	//         coordZ, or pass syncToPoints = true to use the current position
+	//         of the corresponding smartPoints, if the segment was defined using
+	//         smartPoints
+	//
+	addMovableLineSegment: function( options ) {
+		options = jQuery.extend({
+			graph: KhanUtil.currentGraph,
+			coordA: [ 0, 0 ],
+			coordZ: [ 1, 1 ],
+			snap: 0,
+			style: { stroke: KhanUtil.BLUE, "stroke-width": 2 },
+			fixed: false,
+			ticks: 0
+		}, options);
+		var graph = options.graph;
+		var lineSegment = jQuery.extend({
+			highlight: false,
+			dragging: false,
+			tick: []
+		}, options);
+
+		graph.style( options.style );
+		for (var i = 0; i < options.ticks; ++i) {
+			lineSegment.tick[i] = KhanUtil.bogusShape;
+		}
+		var path = KhanUtil.svgPath([ [ 0, 0 ], [ graph.scale[0], 0 ] ]);
+		for (var i = 0; i < options.ticks; ++i) {
+			var tickoffset = (0.5 * graph.scale[0]) - (options.ticks - 1) * 1 + (i * 2);
+			path += KhanUtil.svgPath([ [ tickoffset, -7 ], [ tickoffset, 7 ] ]);
+		}
+		lineSegment.visibleLine = graph.raphael.path( path );
+		lineSegment.visibleLine.attr( options.style );
+		//lineSegment.visibleLine = graph.line( [graph.range[0][0], graph.range[1][1]], [graph.range[0][0]+1, graph.range[1][1]] );
+		lineSegment.mouseTarget = graph.mouselayer.rect(
+			graph.scalePoint([graph.range[0][0], graph.range[1][1]])[0],
+			graph.scalePoint([graph.range[0][0], graph.range[1][1]])[1] - 10,
+			graph.scaleVector([1, 1])[0], 20
+		);
+		lineSegment.mouseTarget.attr({fill: "#000", "opacity": 0.0});
+
+		if ( typeof options.pointA === "object" ) {
+			lineSegment.coordA = options.pointA.coord;
+			options.pointA.lineStarts.push( lineSegment );
+			options.pointA.point.visibleShape.toFront();
+			options.pointA.point.mouseTarget.toFront();
+		}
+		if ( typeof options.pointZ === "object" ) {
+			lineSegment.coordZ = options.pointZ.coord;
+			options.pointZ.lineEnds.push( lineSegment );
+			options.pointZ.point.visibleShape.toFront();
+			options.pointZ.point.mouseTarget.toFront();
+		}
+
+		// Reposition the line segment. Call after changing coordA and/or
+		// coordZ, or pass syncToPoints = true to use the current position of
+		// the corresponding smartPoints, if the segment was defined using
+		// smartPoints
+		lineSegment.transform = function( syncToPoints ) {
+			if ( syncToPoints ) {
+				if ( typeof this.pointA === "object" ) {
+					this.coordA = this.pointA.coord;
+				}
+				if ( typeof this.pointZ === "object" ) {
+					this.coordZ = this.pointZ.coord;
+				}
+			}
+			var angle = KhanUtil.findAngle( this.coordZ, this.coordA );
+			var scaledA = graph.scalePoint( this.coordA );
+			this.visibleLine.translate( scaledA[0] - this.visibleLine.attr("translation").x, scaledA[1] - this.visibleLine.attr("translation").y );
+			this.visibleLine.rotate( -angle, scaledA[0], scaledA[1] );
+			this.visibleLine.scale( KhanUtil.distance(this.coordA, this.coordZ), 1, scaledA[0], scaledA[1] );
+
+			this.mouseTarget.translate( scaledA[0] - this.mouseTarget.attr("translation").x, scaledA[1] - this.mouseTarget.attr("translation").y );
+			this.mouseTarget.rotate( -angle, scaledA[0], scaledA[1] );
+			this.mouseTarget.scale( KhanUtil.distance(this.coordA, this.coordZ), 1, scaledA[0], scaledA[1] );
+			// for (var i = 0; i < lineSegment.ticks; ++i) {
+				// lineSegment.tick[i].remove();
+				// graph.style({ stroke: lineSegment.color, "stroke-width": 2, opacity: 1.0 });
+				// lineSegment.tick[i] = graph.line( [graph.range[0][0]+0.5, graph.range[1][1]-0.15], [graph.range[0][0]+0.5, graph.range[1][1]+0.15] );
+				// lineSegment.tick[i].translate( scaledA[0] - lineSegment.tick[i].attr("translation").x, scaledA[1] - lineSegment.tick[i].attr("translation").y );
+				// lineSegment.tick[i].rotate( -angle, scaledA[0], scaledA[1] );
+				// lineSegment.tick[i].scale( KhanUtil.distance(this.coordA, this.coordZ), 1, scaledA[0], scaledA[1] );
+			// }
+		};
+
+		// Change z-order to back
+		lineSegment.toBack = function() {
+			lineSegment.mouseTarget.toBack();
+			lineSegment.visibleLine.toBack();
+		};
+
+		// Change z-order to front
+		lineSegment.toFront = function() {
+			lineSegment.mouseTarget.toFront();
+			lineSegment.visibleLine.toFront();
+		};
+
+		if ( !options.fixed ) {
+			jQuery( lineSegment.mouseTarget[0] ).css( "cursor", "move" );
+			jQuery( lineSegment.mouseTarget[0] ).bind("vmousedown vmouseover vmouseout", function( event ) {
+				if ( event.type === "vmouseover" ) {
+					if ( !KhanUtil.dragging ) {
+						lineSegment.highlight = true;
+						lineSegment.visibleLine.animate({ "stroke-width": 5, "stroke": KhanUtil.ORANGE }, 50 );
+					}
+
+				} else if ( event.type === "vmouseout" ) {
+					lineSegment.highlight = false;
+					if ( !lineSegment.dragging ) {
+						lineSegment.visibleLine.animate( lineSegment.style, 50 );
+					}
+
+				} else if ( event.type === "vmousedown" && (event.which === 1 || event.which === 0) ) {
+					event.preventDefault();
+					// coord{X|Y} are the scaled coordinate values of the mouse position
+					var coordX = (event.pageX - jQuery( graph.raphael.canvas.parentNode ).offset().left) / graph.scale[0] + graph.range[0][0];
+					var coordY = graph.range[1][1] - (event.pageY - jQuery( graph.raphael.canvas.parentNode ).offset().top) / graph.scale[1];
+					// Offsets between the mouse and each end of the line segment
+					var mouseOffsetA = [ lineSegment.coordA[0] - coordX, lineSegment.coordA[1] - coordY ];
+					var mouseOffsetZ = [ lineSegment.coordZ[0] - coordX, lineSegment.coordZ[1] - coordY ];
+
+					// Figure out how many pixels of the bounding box of the line segment lie to each direction of the mouse
+					var offsetLeft = -Math.min( graph.scaleVector(mouseOffsetA)[0], graph.scaleVector(mouseOffsetZ)[0] );
+					var offsetRight = Math.max( graph.scaleVector(mouseOffsetA)[0], graph.scaleVector(mouseOffsetZ)[0] );
+					var offsetTop = Math.max( graph.scaleVector(mouseOffsetA)[1], graph.scaleVector(mouseOffsetZ)[1] );
+					var offsetBottom = -Math.min( graph.scaleVector(mouseOffsetA)[1], graph.scaleVector(mouseOffsetZ)[1] );
+
+					jQuery( document ).bind("vmousemove vmouseup", function( event ) {
+						event.preventDefault();
+						lineSegment.dragging = true;
+						KhanUtil.dragging = true;
+
+						// mouse{X|Y} are in pixels relative to the SVG
+						var mouseX = event.pageX - jQuery( graph.raphael.canvas.parentNode ).offset().left;
+						var mouseY = event.pageY - jQuery( graph.raphael.canvas.parentNode ).offset().top;
+						// no part of the line segment can go beyond 10 pixels from the edge
+						mouseX = Math.max(offsetLeft + 10, Math.min(graph.xpixels-10-offsetRight, mouseX));
+						mouseY = Math.max(offsetTop + 10, Math.min(graph.ypixels-10-offsetBottom, mouseY));
+
+						// coord{X|Y} are the scaled coordinate values
+						var coordX = mouseX / graph.scale[0] + graph.range[0][0];
+						var coordY = graph.range[1][1] - mouseY / graph.scale[1];
+						if ( event.type === "vmousemove" ) {
+							var dX = coordX + mouseOffsetA[0] - lineSegment.coordA[0];
+							var dY = coordY + mouseOffsetA[1] - lineSegment.coordA[1];
+							lineSegment.coordA = [coordX + mouseOffsetA[0], coordY + mouseOffsetA[1]];
+							lineSegment.coordZ = [coordX + mouseOffsetZ[0], coordY + mouseOffsetZ[1]];
+							lineSegment.transform();
+							if (typeof lineSegment.onMove === "function") {
+								lineSegment.onMove( dX, dY );
+							}
+
+						} else if ( event.type === "vmouseup" ) {
+							jQuery( document ).unbind( "vmousemove vmouseup" );
+							lineSegment.dragging = false;
+							KhanUtil.dragging = false;
+							if (!lineSegment.highlight) {
+								lineSegment.visibleLine.animate(lineSegment.style, 50 );
+							}
+							if (typeof lineSegment.onMoveEnd === "function") {
+								lineSegment.onMoveEnd();
+							}
+
+						}
+					});
+				}
+			});
+		}
+
+		lineSegment.toBack();
+		lineSegment.transform();
+		return lineSegment;
 	},
 
 });
